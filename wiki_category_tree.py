@@ -41,10 +41,11 @@ def query_wikimedia_api(params:dict, api_endpoint:str):
 
     return out
 
-def fetch_subcategories(category: list, api_endpoint:str):
+def fetch_members(category: list, api_endpoint:str):
     """
     Fetch the subcategories of the cateogry whose name is in the input parameter
 
+    Docs: https://www.mediawiki.org/wiki/API:Categorymembers
     Example URL: https://commons.wikimedia.org/w/api.php?action=query&format=json&formatversion=2&list=categorymembers&cmtype=subcat&cmtitle=Category:Certosa%20(Bologna)
     Other example URL, not used here: https://commons.wikimedia.org/w/api.php?action=query&format=json&formatversion=2&gcmtitle=Category:Certosa%20(Bologna)&generator=categorymembers&prop=info
     """
@@ -53,32 +54,27 @@ def fetch_subcategories(category: list, api_endpoint:str):
         format='json',
         formatversion='2',
         list='categorymembers',
-        cmtype='subcat',
+        #cmtype='subcat',
         cmlimit='500', # 500 = max
         cmtitle=category
     )
     return query_wikimedia_api(params, api_endpoint)["query"]["categorymembers"]
 
-def fetch_category_details(names: list, api_endpoint:str):
+def fetch_details(names: list, api_endpoint:str):
     """
-    Fetch the details of the categories whose names are in the input list
+    Fetch the details of the categories/files whose names are in the input list
 
+    # Docs: https://www.mediawiki.org/wiki/API:Properties
     Example URL: https://commons.wikimedia.org/w/api.php?action=query&format=json&formatversion=2&prop=info&titles=Category:Certosa%20(Bologna)
     """
     params = dict(
         action='query',
         format='json',
         formatversion='2',
-        prop="info|categories", # https://www.mediawiki.org/wiki/API:Properties
+        prop="info|categories",
         titles='|'.join(names)
     )
     return query_wikimedia_api(params, api_endpoint)["query"]["pages"]
-
-def fetch_articles(articles: list, api_endpoint:str):
-    """
-    Fetch the details of the articles whose names are in the input list 
-    """
-    # TODO
 
 explored_categories = set()
 
@@ -89,14 +85,15 @@ def explore_category(category: list, g: nx.Graph, api_endpoint: str):
     if(category in explored_categories):
         return
     
-    print("Exploring category: ", category)
-    subcategories = fetch_subcategories(category, api_endpoint)
-    explored_categories.add(category)
-    for subcategory in subcategories:
+    members = fetch_members(category, api_endpoint)
+    print("Found ", len(members), "members in ", category)
+    explored_categories.add(category) # Prevent loops
+    for member in members:
         # https://networkx.org/documentation/stable/reference/classes/generated/networkx.DiGraph.add_node.html#digraph-add-node
         # https://networkx.org/documentation/stable/reference/classes/generated/networkx.DiGraph.add_edge.html#digraph-add-edge
-        g.add_edge(subcategory["title"], category)
-        explore_category(subcategory["title"], g, api_endpoint)
+        g.add_edge(category, member["title"])
+        if member["title"].startswith("Category:"):
+            explore_category(member["title"], g, api_endpoint)
 
 def scrape(root_category: str, api_endpoint = "https://commons.wikimedia.org/w/api.php") -> nx.DiGraph:
     """
@@ -109,10 +106,11 @@ def scrape(root_category: str, api_endpoint = "https://commons.wikimedia.org/w/a
 if __name__ == "__main__":
     graph = scrape('Category:Certosa (Bologna)', 'https://commons.wikimedia.org/w/api.php')
 
+    nx.write_adjlist(graph, "certosa_adj.tsv", delimiter='\t')
+    nx.write_edgelist(graph, "certosa_edge.tsv", delimiter='\t')
+
     plt.figure(figsize=(100, 100))
     nx.draw_networkx(graph, with_labels=False)
     plt.savefig("certosa.svg")
-
-    nx.write_adjlist(graph, "certosa.tsv", delimiter='\t')
 
     print("Done!")
