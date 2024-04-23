@@ -7,9 +7,8 @@ from os import mkdir, rename
 from os.path import isfile, isdir, join
 import json
 import networkx as nx
-#import matplotlib.pyplot as plt
 import requests
-#from pyvis.network import Network
+import csv
 
 CACHE_DIR_NAME = '.cache'
 MAX_SUBCATEGORIES = 500 # 500 = max ( https://www.mediawiki.org/wiki/API:Categorymembers )
@@ -22,6 +21,9 @@ def query_wikimedia_api(params:dict, api_endpoint:str):
     legacy_file_path = join(CACHE_DIR_NAME, f'{params_hash}.json')
     dir_path = join(CACHE_DIR_NAME, params_hash[:2])
     file_path = join(dir_path, f'{params_hash}.json')
+
+    if not isdir(CACHE_DIR_NAME):
+        mkdir(CACHE_DIR_NAME)
 
     if not isdir(dir_path):
         mkdir(dir_path)
@@ -51,7 +53,7 @@ def query_wikimedia_api(params:dict, api_endpoint:str):
 
     return out
 
-def fetch_members(category: list, api_endpoint:str):
+def fetch_members(category: list, only_categories: bool, api_endpoint: str):
     """
     Fetch the subcategories of the cateogry whose name is in the input parameter
 
@@ -64,7 +66,7 @@ def fetch_members(category: list, api_endpoint:str):
         'format': 'json',
         'formatversion': '2',
         'list': 'categorymembers',
-        #'cmtype': 'subcat',
+        'cmtype': 'subcat' if only_categories else 'page|subcat|file',
         'cmlimit': MAX_SUBCATEGORIES,
         'cmtitle': category
     }
@@ -118,48 +120,49 @@ def split_in_batches(iterable, n=1):
         yield iterable[ndx:min(ndx + n, l)]
 
 explored_categories = set()
+contents = []
 
-def explore_category(category: list, g: nx.Graph, api_endpoint: str):
+def explore_category(category: str, g: nx.Graph, only_categories:bool, api_endpoint: str, title_prefix: str):
     """
     Recursive depth first exploration of the category graph
     """
     if category in explored_categories:
         return # Prevent infinite loops in case of cycles
 
-    members = fetch_members(category, api_endpoint)
+    members = fetch_members(category, only_categories, api_endpoint)
     for batch in split_in_batches(members, 50):
         print("Found ", len(members), "members in ", category, ", fetching content for batch")
         member_contents = fetch_content([member["title"] for member in batch], api_endpoint)
         explored_categories.add(category) # Prevent loops
         for member in batch:
-            member_content = member_contents[str(member["pageid"])]["revisions"][0]["slots"]["main"]
+            member_content = member_contents[str(member["pageid"])]["revisions"][0]["slots"]["main"]["*"]
+
+            contents.append([title_prefix+member["title"], member_content.replace('\n', '\\n')])
+
             # https://networkx.org/documentation/stable/reference/classes/generated/networkx.DiGraph.add_node.html#digraph-add-node
             g.add_node(member["title"], content=member_content)
             # https://networkx.org/documentation/stable/reference/classes/generated/networkx.DiGraph.add_edge.html#digraph-add-edge
             g.add_edge(category, member["title"])
             if member["title"].startswith("Category:"):
-                explore_category(member["title"], g, api_endpoint)
+                explore_category(member["title"], g, only_categories, api_endpoint, title_prefix + '\t')
 
-def scrape(root_category: str, api_endpoint = "https://commons.wikimedia.org/w/api.php") -> nx.DiGraph:
+def scrape(root_category: str, only_categories:bool, api_endpoint: str) -> nx.DiGraph:
     """
     Scrape the Wikipedia category tree starting from the root category
     """
     g = nx.DiGraph()
-    explore_category(root_category, g, api_endpoint)
+    explore_category(root_category, g, only_categories, api_endpoint, '')
+
+    with open('content.csv', 'w') as f:
+        writer = csv.writer(f, quoting=csv.QUOTE_ALL)
+        writer.writerows(contents)
+
     return g
 
 if __name__ == "__main__":
-    graph = scrape('Category:Certosa (Bologna)', 'https://commons.wikimedia.org/w/api.php')
+    graph = scrape('Category:Certosa (Bologna)', True, 'https://commons.wikimedia.org/w/api.php')
 
     nx.write_adjlist(graph, "certosa_adj.tsv", delimiter='\t')
     nx.write_edgelist(graph, "certosa_edge.tsv", delimiter='\t')
-
-    # plt.figure(figsize=(200, 200))
-    # nx.draw_networkx(graph, with_labels=False)
-    # plt.savefig("certosa.svg")
-
-    # nt = Network('500px', '500px')
-    # nt.from_nx(nx)
-    # nt.show('nx.html')
 
     print("Done!")

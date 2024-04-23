@@ -1,4 +1,6 @@
-certosa*
+*.csv
+*.tsv
+*.html
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
